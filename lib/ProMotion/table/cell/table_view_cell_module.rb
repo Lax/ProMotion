@@ -58,7 +58,7 @@ module ProMotion
     end
 
     def set_remote_image
-      return unless data_cell[:remote_image] && (sd_web_image? || jm_image_cache?)
+      return unless data_cell[:remote_image] && (sd_web_image? || pin_remote_image? || jm_image_cache?)
 
       self.imageView.image = remote_placeholder
 
@@ -82,6 +82,13 @@ module ProMotion
               self.setNeedsLayout
           })
         end
+      elsif pin_remote_image?
+        self.imageView.pin_setImageFromURL(data_cell[:remote_image][:url].to_url, completion: ->(result) {
+          if result.error
+            self.imageView.image = remote_placeholder
+          end
+          self.setNeedsLayout
+        })
       elsif jm_image_cache?
         mp "'JMImageCache' is known to have issues with ProMotion. Please consider switching to 'SDWebImage'. 'JMImageCache' support will be deprecated in the next major version.", force_color: :yellow
         JMImageCache.sharedCache.imageForURL(data_cell[:remote_image][:url].to_url, completionBlock:proc { |downloaded_image|
@@ -137,6 +144,11 @@ module ProMotion
     end
 
   private
+
+    def pin_remote_image?
+      return false if RUBYMOTION_ENV == 'test'
+      !!defined?(PINRemoteImageManager)
+    end
 
     def sd_web_image?
       return false if RUBYMOTION_ENV == 'test'
