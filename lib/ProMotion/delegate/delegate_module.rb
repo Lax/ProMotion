@@ -1,7 +1,8 @@
 module ProMotion
   module DelegateModule
+    include ProMotion::Support
     include ProMotion::Tabs
-    include ProMotion::SplitScreen if UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad
+    include ProMotion::SplitScreen if UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad || (UIDevice.currentDevice.systemVersion.to_i >= 8 )
 
     attr_accessor :window, :home_screen
 
@@ -42,16 +43,8 @@ module ProMotion
       try :on_open_url, { url: url, source_app: source_app, annotation: annotation }
     end
 
-    def app
-      UIApplication.sharedApplication
-    end
-
-    def app_delegate
-      self
-    end
-
-    def app_window
-      window
+    def application(application, continueUserActivity:user_activity, restorationHandler:restoration_handler)
+      try :on_continue_user_activity, { user_activity: user_activity, restoration_handler: restoration_handler }
     end
 
     def ui_window
@@ -83,10 +76,6 @@ module ProMotion
       self.class.send(:apply_status_bar)
     end
 
-    def try(method, *args)
-      send(method, *args) if respond_to?(method)
-    end
-
   public
 
     module ClassMethods
@@ -97,7 +86,7 @@ module ProMotion
       end
 
       def apply_status_bar
-        @status_bar_visible ||= true
+        @status_bar_visible = true if @status_bar_visible.nil?
         @status_bar_opts ||= { animation: :none }
         UIApplication.sharedApplication.setStatusBarHidden(!@status_bar_visible, withAnimation:status_bar_animation(@status_bar_opts[:animation]))
       end

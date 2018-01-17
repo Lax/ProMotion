@@ -18,8 +18,8 @@ module ProMotion
     end
 
     def set_nav_bar_button(side, args={})
-      button = create_toolbar_button(args)
-      button.setTintColor args[:tint_color] if args[:tint_color]
+      button = (args.is_a?(UIBarButtonItem)) ? args : create_toolbar_button(args)
+      button.setTintColor args[:tint_color] if args.is_a?(Hash) && args[:tint_color]
 
       self.navigationItem.leftBarButtonItem = button if side == :left
       self.navigationItem.rightBarButtonItem = button if side == :right
@@ -28,9 +28,16 @@ module ProMotion
       button
     end
 
+    def set_nav_bar_buttons(side, buttons=[])
+      buttons = buttons.map{ |b| b.is_a?(UIBarButtonItem) ? b : create_toolbar_button(b) }.reverse
+
+      self.navigationItem.setLeftBarButtonItems(buttons) if side == :left
+      self.navigationItem.setRightBarButtonItems(buttons) if side == :right
+    end
+
     # TODO: In PM 2.1+, entirely remove this deprecated method.
     def set_nav_bar_left_button(title, args={})
-      PM.logger.deprecated "set_nav_bar_right_button and set_nav_bar_left_button have been removed. Use set_nav_bar_button :right/:left instead."
+      mp "set_nav_bar_right_button and set_nav_bar_left_button have been removed. Use set_nav_bar_button :right/:left instead.", force_color: :yellow
     end
     alias_method :set_nav_bar_right_button, :set_nav_bar_left_button
 
@@ -46,6 +53,8 @@ module ProMotion
     alias_method :set_toolbar_button,  :set_toolbar_items
 
     def add_nav_bar(args = {})
+      args = self.class.get_nav_bar.merge(args)
+      return unless args[:nav_bar]
       self.navigationController ||= begin
         self.first_screen = true if self.respond_to?(:first_screen=)
         nav = (args[:nav_controller] || NavigationController).alloc.initWithRootViewController(self)
@@ -54,7 +63,12 @@ module ProMotion
         nav
       end
       self.navigationController.toolbarHidden = !args[:toolbar] unless args[:toolbar].nil?
-      self.navigationController.setNavigationBarHidden(args[:hide_nav_bar], animated: false) unless args[:hide_nav_bar].nil?
+    end
+
+    def view_will_appear(animated)
+      if @screen_options && !@screen_options[:hide_nav_bar].nil?
+        self.navigationController.setNavigationBarHidden(@screen_options[:hide_nav_bar], animated: false)
+      end
     end
 
   private
@@ -65,13 +79,13 @@ module ProMotion
     end
 
     def bar_button_item(button_type, args)
-      return PM.logger.deprecated("`system_icon:` no longer supported. Use `system_item:` instead.") if args[:system_icon]
+      return mp("`system_icon:` no longer supported. Use `system_item:` instead.", force_color: :yellow) if args[:system_icon]
       return button_type if button_type.is_a?(UIBarButtonItem)
       return bar_button_item_system_item(args) if args[:system_item]
       return bar_button_item_image(button_type, args) if button_type.is_a?(UIImage)
       return bar_button_item_string(button_type, args) if button_type.is_a?(String)
       return bar_button_item_custom(button_type) if button_type.is_a?(UIView)
-      PM.logger.error("Please supply a title string, a UIImage or :system.") && nil
+      mp("Please supply a title string, a UIImage or :system.", force_color: :red) && nil
     end
 
     def bar_button_item_image(img, args)

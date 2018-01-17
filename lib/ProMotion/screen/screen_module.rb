@@ -1,57 +1,30 @@
 module ProMotion
   module ScreenModule
+    include ProMotion::Support
     include ProMotion::ScreenNavigation
     include ProMotion::Styling
     include ProMotion::NavBarModule
     include ProMotion::Tabs
-    include ProMotion::SplitScreen if UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad
+    include ProMotion::SplitScreen if UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad || (UIDevice.currentDevice.systemVersion.to_i >= 8 )
 
-    attr_accessor :parent_screen, :first_screen, :modal, :split_screen
+    attr_reader :parent_screen
+    attr_accessor :first_screen, :modal, :split_screen
 
     def screen_init(args = {})
+      @screen_options = args
       check_ancestry
       resolve_title
       apply_properties(args)
-      add_nav_bar(args) if args[:nav_bar]
+      add_nav_bar(args)
+      add_nav_bar_buttons
       tab_bar_setup
-      try :screen_setup
       try :on_init
-      PM.logger.deprecated "In #{self.class.to_s}, #on_create has been deprecated and removed. Use #screen_init instead." if respond_to?(:on_create)
+      try :screen_setup
+      mp "In #{self.class.to_s}, #on_create has been deprecated and removed. Use #screen_init instead.", force_color: :yellow if respond_to?(:on_create)
     end
 
     def modal?
       self.modal == true
-    end
-
-    def resolve_title
-      case self.class.title_type
-      when :text then self.title = self.class.title
-      when :view then self.navigationItem.titleView = self.class.title
-      when :image then self.navigationItem.titleView = UIImageView.alloc.initWithImage(self.class.title)
-      else
-        PM.logger.warn("title expects string, UIView, or UIImage, but #{self.class.title.class.to_s} given.")
-      end
-    end
-
-    def resolve_status_bar
-      case self.class.status_bar_type
-      when :none
-        status_bar_hidden true
-      when :light
-        status_bar_hidden false
-        status_bar_style UIStatusBarStyleLightContent
-      else
-        status_bar_hidden false
-        status_bar_style UIStatusBarStyleDefault
-      end
-    end
-
-    def status_bar_hidden(hidden)
-      UIApplication.sharedApplication.setStatusBarHidden(hidden, withAnimation:self.class.status_bar_animation)
-    end
-
-    def status_bar_style(style)
-      UIApplication.sharedApplication.setStatusBarStyle(style)
     end
 
     def parent_screen=(parent)
@@ -67,6 +40,7 @@ module ProMotion
     end
 
     def view_will_appear(animated)
+      super
       resolve_status_bar
       self.will_appear
 
@@ -98,6 +72,18 @@ module ProMotion
     end
     def on_disappear; end
     def on_dismiss; end
+
+    def did_receive_memory_warning
+      self.on_memory_warning
+    end
+    def on_memory_warning
+      mp "Received memory warning in #{self.inspect}. You should implement on_memory_warning in your screen.", force_color: :red
+    end
+
+    def on_live_reload
+      self.view.subviews.each(&:removeFromSuperview)
+      on_load
+    end
 
     def should_rotate(orientation)
       case orientation
@@ -166,14 +152,67 @@ module ProMotion
       return self.view_or_self.frame
     end
 
-    def try(method, *args)
-      send(method, *args) if respond_to?(method)
+    def add_child_screen(screen)
+      screen = screen.new if screen.respond_to?(:new)
+      addChildViewController(screen)
+      screen.parent_screen = self
+      screen.didMoveToParentViewController(self) # Required
+      screen
+    end
+
+    def remove_child_screen(screen)
+      screen.parent_screen = nil
+      screen.willMoveToParentViewController(nil) # Required
+      screen.removeFromParentViewController
+      screen
     end
 
   private
 
+    def resolve_title
+      case self.class.title_type
+      when :text then self.title = self.class.title
+      when :view then self.navigationItem.titleView = self.class.title
+      when :image then self.navigationItem.titleView = UIImageView.alloc.initWithImage(self.class.title)
+      else
+        mp("title expects string, UIView, or UIImage, but #{self.class.title.class.to_s} given.", force_color: :yellow)
+      end
+    end
+
+    def resolve_status_bar
+      case self.class.status_bar_type
+      when :none
+        status_bar_hidden true
+      when :light
+        status_bar_hidden false
+        status_bar_style UIStatusBarStyleLightContent
+      when :dark
+        status_bar_hidden false
+        status_bar_style UIStatusBarStyleDefault
+      else
+        return status_bar_hidden true if UIApplication.sharedApplication.isStatusBarHidden
+        status_bar_hidden false
+        global_style = NSBundle.mainBundle.objectForInfoDictionaryKey("UIStatusBarStyle")
+        status_bar_style global_style ? Object.const_get(global_style) : UIStatusBarStyleDefault
+      end
+    end
+
+    def add_nav_bar_buttons
+      self.class.get_nav_bar_button.each do |button_args|
+        set_nav_bar_button(button_args[:side], button_args)
+      end
+    end
+
+    def status_bar_hidden(hidden)
+      UIApplication.sharedApplication.setStatusBarHidden(hidden, withAnimation:self.class.status_bar_animation)
+    end
+
+    def status_bar_style(style)
+      UIApplication.sharedApplication.setStatusBarStyle(style)
+    end
+
     def apply_properties(args)
-      reserved_args = [ :nav_bar, :hide_nav_bar, :hide_tab_bar, :animated, :close_all, :in_tab, :in_detail, :in_master, :to_screen ]
+      reserved_args = [ :nav_bar, :hide_nav_bar, :hide_tab_bar, :animated, :close_all, :in_tab, :in_detail, :in_master, :to_screen, :toolbar ]
       set_attributes self, args.dup.delete_if { |k,v| reserved_args.include?(k) }
     end
 
@@ -192,12 +231,12 @@ module ProMotion
     module ClassMethods
       def title(t=nil)
         if t && t.is_a?(String) == false
-          PM.logger.deprecated "You're trying to set the title of #{self.to_s} to an instance of #{t.class.to_s}. In ProMotion 2+, you must use `title_image` or `title_view` instead."
+          mp "You're trying to set the title of #{self.to_s} to an instance of #{t.class.to_s}. In ProMotion 2+, you must use `title_image` or `title_view` instead.", force_color: :yellow
           return raise StandardError
         end
         @title = t if t
         @title_type = :text if t
-        @title ||= self.to_s
+        @title
       end
 
       def title_type
@@ -216,7 +255,7 @@ module ProMotion
 
       def status_bar(style=nil, args={})
         if NSBundle.mainBundle.objectForInfoDictionaryKey('UIViewControllerBasedStatusBarAppearance').nil?
-          PM.logger.warn("status_bar will have no effect unless you set 'UIViewControllerBasedStatusBarAppearance' to false in your info.plist")
+          mp "status_bar will have no effect unless you set 'UIViewControllerBasedStatusBarAppearance' to false in your info.plist", force_color: :yellow
         end
         @status_bar_style = style
         @status_bar_animation = args[:animation] if args[:animation]
@@ -228,6 +267,25 @@ module ProMotion
 
       def status_bar_animation
         @status_bar_animation || UIStatusBarAnimationSlide
+      end
+
+      def nav_bar(enabled, args={})
+        @nav_bar_args = ({ nav_bar: enabled }).merge(args)
+      end
+
+      def get_nav_bar
+        @nav_bar_args ||= { nav_bar: false }
+      end
+
+      def nav_bar_button(side, args={})
+        button_args = args.merge(:side => side)
+
+        @nav_bar_button_args ||= []
+        @nav_bar_button_args << button_args
+      end
+
+      def get_nav_bar_button
+        @nav_bar_button_args ||= []
       end
     end
 
